@@ -1,0 +1,92 @@
+import os
+import shutil
+
+import cv2
+import torch
+import numpy
+
+from src.ucs_alg_node import Alg, Fcn
+
+video_resize = 0.25
+
+model = Fcn()  # 定义模型
+weights_path = "weights/model_12.pth"  # 权重
+weights = torch.load(weights_path,map_location='cpu')
+model.load_state_dict(weights)
+
+
+
+class MyAlg(Alg):
+
+    def infer_batch(self, data='D:\gugol\Motion_Emotion_Dataset'):
+        if not data:
+            return []
+
+        if not os.path.isdir(data):
+            print("The provided data path is not a directory.")
+            return []
+
+        files = os.listdir(data)
+        videos = [file for file in files if file.endswith('.mp4')]  # Filter for .mp4 files
+
+        if not videos:
+            print("No video files found in the directory.")
+            return []
+
+        # # TODO: 从data所指定的地址读取视频，并且存储到本地: ‘video___ts.mp4’
+        f = open('video.mp4', 'wb')
+        for i, video in enumerate(videos):
+            src_path = os.path.join(data, video)
+            dst_path = os.path.join(data, f'video_{i:03d}.mp4')  # Save as video_000.mp4, video_001.mp4, etc.
+            shutil.copyfile(src_path, dst_path)
+            print(f"Copied {src_path} to {dst_path}")
+
+        return videos
+
+        cap = cv2.VideoCapture(f)  # 读取视频
+        ret, img = cap.read()  # 取出
+        if ret == False:
+            print("读取视频失败")
+            cap.release()
+            cv2.destroyAllWindows()
+            return []
+
+        img_model = cv2.resize(img, (0, 0), fx=video_resize, fy=video_resize)  # 输入模型的第一帧图片，缩放
+        img_grey = cv2.cvtColor(img_model, cv2.COLOR_BGR2GRAY)  # 二值
+        prev_img_grey = img_grey  # 第一帧视频
+        frame = 1  # 第二帧视频
+
+        labels = []
+
+        while True:
+            ret, img = cap.read()  # 取出视频， img是原始视频
+
+            if not ret:
+                # print("读取视频结束")
+                break
+
+            img_model = cv2.resize(img, (0, 0), fx=video_resize, fy=video_resize)  # 输入视频
+            img_grey = cv2.cvtColor(img_model, cv2.COLOR_BGR2GRAY)
+
+            flow = cv2.calcOpticalFlowFarneback(prev_img_grey, img_grey, None, 0.5, 5, 15, 3, 5, 1.1,
+                                                cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
+
+            flow = flow[np.newaxis, :]
+            flow = flow.transpose(0, 3, 1, 2)
+            flow = torch.from_numpy(flow).float().to(model.device)
+
+            predict = model(flow)  # 预测输出
+            predict = torch.argmax(predict, 1).cpu().numpy()[0]
+
+            labels.append(predict)
+
+            frame += 1  #
+            prev_img_grey = img_grey
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+
+        # TODO: 删除临时文件
+        os.remove('video.mp4')
+        return labels
